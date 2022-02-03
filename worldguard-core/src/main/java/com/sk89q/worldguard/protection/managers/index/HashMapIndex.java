@@ -41,6 +41,8 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.logging.Level;
+import net.openhft.chronicle.map.*;
+import net.openhft.chronicle.set.*;
 
 /**
  * An index that stores regions in a hash map, which allows for fast lookup
@@ -51,9 +53,24 @@ import java.util.logging.Level;
  */
 public class HashMapIndex extends AbstractRegionIndex implements ConcurrentRegionIndex {
 
-    private final ConcurrentMap<String, ProtectedRegion> regions = new ConcurrentHashMap<>();
-    private Set<ProtectedRegion> removed = new HashSet<>();
+    private ChronicleMapBuilder<String, ProtectedRegion> regionsBuilder;
+    private ChronicleSetBuilder<ProtectedRegion> removedBuilder;
+    private ChronicleMap<String, ProtectedRegion> regions;
+    private ChronicleSet<ProtectedRegion> removed;
     private final Object lock = new Object();
+
+    public void HashMapIndex(String name) {
+        System.out.println("HashMapIndex: " + name);
+        regionsBuilder = ChronicleMapBuilder.of(String.class, ProtectedRegion.class)
+                .name(name + "_regions")
+                .averageKey("region_name")
+                .entries(100_000);
+        regions = regionsBuilder.createPersistedTo("WorldGuard/data/" + name + "_regions.dat");
+        removedBuilder = ChronicleSet.of(ProtectedRegion.class)
+        .name(name + "_removed")
+        .entries(100_000)
+        removed = removedBuilder.createPersistedTo("WorldGuard/data/" + name + "_removed.dat");
+    }
 
     /**
      * Called to rebuild the index after changes.
@@ -241,7 +258,7 @@ public class HashMapIndex extends AbstractRegionIndex implements ConcurrentRegio
     public RegionDifference getAndClearDifference() {
         synchronized (lock) {
             Set<ProtectedRegion> changed = new HashSet<>();
-            Set<ProtectedRegion> removed = this.removed;
+            Set<ProtectedRegion> removed = Set.copyOf(this.removed);
 
             for (ProtectedRegion region : regions.values()) {
                 if (region.isDirty()) {
@@ -250,7 +267,7 @@ public class HashMapIndex extends AbstractRegionIndex implements ConcurrentRegio
                 }
             }
 
-            this.removed = new HashSet<>();
+            this.removed.clear();
 
             return new RegionDifference(changed, removed);
         }
@@ -307,7 +324,7 @@ public class HashMapIndex extends AbstractRegionIndex implements ConcurrentRegio
     public static final class Factory implements Function<String, HashMapIndex> {
         @Override
         public HashMapIndex apply(String name) {
-            return new HashMapIndex();
+            return new HashMapIndex(name);
         }
     }
 
